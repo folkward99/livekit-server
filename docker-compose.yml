@@ -12,7 +12,7 @@ services:
     entrypoint:
       - /bin/sh
       - -c
-      - "/scripts/init.sh && exec /livekit-server --config /config/livekit.yaml"
+      - "sh /scripts/init.sh && exec /livekit-server --config /config/livekit.yaml"
     environment:
       - REDIS_URL=${REDIS_URL}
       - LIVEKIT_PORT=${LIVEKIT_PORT}
@@ -46,7 +46,7 @@ services:
       - "${TURN_TLS_PORT}:${TURN_TLS_PORT}/udp"
       - "${TURN_TLS_PORT}:${TURN_TLS_PORT}/tcp"
     healthcheck:
-      test: ["CMD", "/scripts/healthcheck.sh", "server", "${LIVEKIT_PORT}"]
+      test: ["CMD", "sh", "/scripts/healthcheck.sh", "server", "${LIVEKIT_PORT}"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -67,7 +67,7 @@ services:
     entrypoint:
       - /bin/sh
       - -c
-      - "/scripts/init.sh && exec /livekit-egress --config /config/egress.yaml"
+      - "sh /scripts/init.sh && exec /livekit-egress --config /config/egress.yaml"
     environment:
       - REDIS_URL=${REDIS_URL}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
@@ -85,7 +85,7 @@ services:
       - ./scripts:/scripts:ro
       - ./storage:/storage
     healthcheck:
-      test: ["CMD", "/scripts/healthcheck.sh", "egress", "8080"]
+      test: ["CMD", "sh", "/scripts/healthcheck.sh", "egress", "8080"]
       interval: 20s
       timeout: 10s
       retries: 3
