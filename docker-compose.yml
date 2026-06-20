@@ -12,7 +12,7 @@ services:
     entrypoint:
       - /bin/sh
       - -c
-      - "sh /scripts/init.sh && exec /livekit-server --config /config/livekit.yaml"
+      - "sh /scripts/init.sh && exec /livekit-server --config /tmp/livekit.yaml"
     environment:
       - REDIS_URL=${REDIS_URL}
       - LIVEKIT_PORT=${LIVEKIT_PORT}
@@ -67,7 +67,7 @@ services:
     entrypoint:
       - /bin/sh
       - -c
-      - "sh /scripts/init.sh && exec /livekit-egress --config /config/egress.yaml"
+      - "sh /scripts/init.sh && exec /livekit-egress --config /tmp/egress.yaml"
     environment:
       - REDIS_URL=${REDIS_URL}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}

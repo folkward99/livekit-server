@@ -97,25 +97,27 @@ if [ -f "/config/livekit.template.yaml" ]; then
       -e "s|\${TURN_TLS_PORT}|$TURN_TLS_PORT|g" \
       -e "s|\${LIVEKIT_API_KEY}|$LIVEKIT_API_KEY|g" \
       -e "s|\${LIVEKIT_API_SECRET}|$LIVEKIT_API_SECRET|g" \
-      /config/livekit.template.yaml > /config/livekit.yaml.tmp
+      /config/livekit.template.yaml > /tmp/livekit.yaml.tmp
 
   # Step 2: Handle TURN TLS Certificates
   if [ -n "$TURN_CERT_FILE" ] && [ -n "$TURN_KEY_FILE" ]; then
     echo "Injecting TURN TLS certificate paths..."
     sed -e "s|\${TURN_CERT_FILE}|$TURN_CERT_FILE|g" \
         -e "s|\${TURN_KEY_FILE}|$TURN_KEY_FILE|g" \
-        /config/livekit.yaml.tmp > /config/livekit.yaml.tmp2
-    mv /config/livekit.yaml.tmp2 /config/livekit.yaml.tmp
+        /tmp/livekit.yaml.tmp > /tmp/livekit.yaml.tmp2
+    mv /tmp/livekit.yaml.tmp2 /tmp/livekit.yaml.tmp
   else
-    echo "Removing TURN TLS cert_file and key_file from configuration (not provided)..."
+    echo "Removing TURN TLS cert_file, key_file, and tls_port from configuration (not provided)..."
     sed -e "/TURN_CERT_FILE/d" \
         -e "/TURN_KEY_FILE/d" \
-        /config/livekit.yaml.tmp > /config/livekit.yaml.tmp2
-    mv /config/livekit.yaml.tmp2 /config/livekit.yaml.tmp
+        -e "/TURN_TLS_PORT/d" \
+        -e "/tls_port/d" \
+        /tmp/livekit.yaml.tmp > /tmp/livekit.yaml.tmp2
+    mv /tmp/livekit.yaml.tmp2 /tmp/livekit.yaml.tmp
   fi
 
-  mv /config/livekit.yaml.tmp /config/livekit.yaml
-  echo "Created active config: /config/livekit.yaml"
+  mv /tmp/livekit.yaml.tmp /tmp/livekit.yaml
+  echo "Created active config: /tmp/livekit.yaml"
 else
   echo "ERROR: /config/livekit.template.yaml not found!"
   exit 1
@@ -133,10 +135,10 @@ if [ -f "/config/egress.template.yaml" ]; then
       -e "s|\${REDIS_PASSWORD}|$REDIS_PASSWORD|g" \
       -e "s|\${REDIS_DB}|$REDIS_DB|g" \
       -e "s|\${LOG_LEVEL}|$LOG_LEVEL|g" \
-      /config/egress.template.yaml > /config/egress.yaml.tmp
+      /config/egress.template.yaml > /tmp/egress.yaml.tmp
       
-  mv /config/egress.yaml.tmp /config/egress.yaml
-  echo "Created active config: /config/egress.yaml"
+  mv /tmp/egress.yaml.tmp /tmp/egress.yaml
+  echo "Created active config: /tmp/egress.yaml"
 else
   echo "ERROR: /config/egress.template.yaml not found!"
   exit 1
