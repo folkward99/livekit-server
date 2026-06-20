@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. LiveKit Core Server
+  # ----------------------------------------------------------------------------
+  livekit-server:
+    image: livekit/livekit-server:v1.7.2
+    container_name: livekit-server
+    restart: unless-stopped
+    # Use custom entrypoint to execute init.sh before running the server
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "/scripts/init.sh && exec /livekit-server --config /config/livekit.yaml"
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - LIVEKIT_PORT=${LIVEKIT_PORT}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - RTC_USE_EXTERNAL_IP=${RTC_USE_EXTERNAL_IP}
+      - RTC_TCP_PORT=${RTC_TCP_PORT}
+      - RTC_UDP_PORT=${RTC_UDP_PORT}
+      - TURN_ENABLED=${TURN_ENABLED}
+      - TURN_DOMAIN=${TURN_DOMAIN}
+      - TURN_UDP_PORT=${TURN_UDP_PORT}
+      - TURN_TLS_PORT=${TURN_TLS_PORT}
+      - TURN_CERT_FILE=${TURN_CERT_FILE}
+      - TURN_KEY_FILE=${TURN_KEY_FILE}
+    volumes:
+      # Mount directory containing templates and scripts
+      - ./config:/config
+      - ./scripts:/scripts:ro
+      - ./storage:/storage
+    ports:
+      # Signaling & API (HTTP/WebSocket) - routed by Dokploy
+      - "${LIVEKIT_PORT}:${LIVEKIT_PORT}"
+      # ICE over TCP
+      - "${RTC_TCP_PORT}:${RTC_TCP_PORT}"
+      # WebRTC Media UDP Mux (Crucial for audio/video transport)
+      - "${RTC_UDP_PORT}:${RTC_UDP_PORT}/udp"
+      # TURN Server Ports (Plain TCP/UDP & TLS TCP/UDP)
+      - "${TURN_UDP_PORT}:${TURN_UDP_PORT}/udp"
+      - "${TURN_UDP_PORT}:${TURN_UDP_PORT}/tcp"
+      - "${TURN_TLS_PORT}:${TURN_TLS_PORT}/udp"
+      - "${TURN_TLS_PORT}:${TURN_TLS_PORT}/tcp"
+    healthcheck:
+      test: ["CMD", "/scripts/healthcheck.sh", "server", "${LIVEKIT_PORT}"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - livekit_net
+
+  # ----------------------------------------------------------------------------
+  # 2. LiveKit Egress (Recording Service)
+  # ----------------------------------------------------------------------------
+  livekit-egress:
+    image: livekit/egress:v1.8.6
+    container_name: livekit-egress
+    restart: unless-stopped
+    # Egress needs SYS_ADMIN capability to run Chromium sandboxing
+    cap_add:
+      - SYS_ADMIN
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "/scripts/init.sh && exec /livekit-egress --config /config/egress.yaml"
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - LIVEKIT_WS_URL=${LIVEKIT_WS_URL}
+      - LOG_LEVEL=${LOG_LEVEL}
+      # Runtime environment variables for MinIO upload integration
+      - EGRESS_MINIO_ENDPOINT=${EGRESS_MINIO_ENDPOINT}
+      - EGRESS_MINIO_ACCESS_KEY=${EGRESS_MINIO_ACCESS_KEY}
+      - EGRESS_MINIO_SECRET_KEY=${EGRESS_MINIO_SECRET_KEY}
+      - EGRESS_MINIO_BUCKET=${EGRESS_MINIO_BUCKET}
+      - EGRESS_MINIO_FORCE_PATH_STYLE=${EGRESS_MINIO_FORCE_PATH_STYLE}
+    volumes:
+      - ./config:/config
+      - ./scripts:/scripts:ro
+      - ./storage:/storage
+    healthcheck:
+      test: ["CMD", "/scripts/healthcheck.sh", "egress", "8080"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      - livekit-server
+    networks:
+      - livekit_net
+
+  # ----------------------------------------------------------------------------
+  # 3. Local Redis (Optional - Used if REDIS_URL=redis://redis:6379/0)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: livekit-redis
+    restart: unless-stopped
+    # Production-ready persistent Redis
+    command: redis-server --save 60 1 --loglevel warning --appendonly yes
+    # Ports are NOT exposed to the host to prevent conflicts. 
+    # Internal communication only.
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - livekit_net
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  livekit_net:
+    driver: bridge

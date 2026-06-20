@@ -1,0 +1,18 @@
+# Ignore environment variables containing production secrets
+.env
+
+# Ignore dynamically generated active configurations
+config/livekit.yaml
+config/egress.yaml
+
+# Ignore recording data in local storage
+storage/*
+!storage/.gitkeep
+
+# Ignore backup exports
+backups/*
+!backups/.gitkeep
+
+# Ignore OS files
+.DS_Store
+Thumbs.db

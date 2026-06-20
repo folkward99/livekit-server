@@ -1,0 +1,67 @@
+# ==============================================================================
+# LiveKit Server Production Configuration Template
+# ==============================================================================
+# This template is processed by 'scripts/init.sh' at container startup.
+# Placeholders (${VARIABLE}) are replaced with actual environment values.
+
+# The HTTP/WebSocket signaling port
+port: ${LIVEKIT_PORT}
+
+# Logging configuration
+logging:
+  level: ${LOG_LEVEL}
+  # Enable JSON formatted logging for production log management
+  json: true
+  # Underling WebRTC Pion log level (pion_level: error is standard for production)
+  pion_level: error
+  # Avoid log spamming by sampling repetitive logs
+  sample: false
+
+# WebRTC media configuration
+rtc:
+  # Single UDP port for WebRTC traffic (ICE UDP Mux)
+  udp_port: ${RTC_UDP_PORT}
+  # Port for WebRTC over TCP (useful for firewalled networks)
+  tcp_port: ${RTC_TCP_PORT}
+  # Auto-discover external IP address (recommended for cloud servers)
+  use_external_ip: ${RTC_USE_EXTERNAL_IP}
+
+# Redis configuration for state coordination
+redis:
+  address: ${REDIS_HOST}:${REDIS_PORT}
+  password: "${REDIS_PASSWORD}"
+  db: ${REDIS_DB}
+
+# Embedded TURN server settings
+turn:
+  enabled: ${TURN_ENABLED}
+  domain: ${TURN_DOMAIN}
+  udp_port: ${TURN_UDP_PORT}
+  tls_port: ${TURN_TLS_PORT}
+  # SSL Certificates for TURN TLS (will be replaced by init.sh if provided)
+  # {TURN_TLS_CONFIG}
+
+# API Keys and Secrets used to sign/verify JWT tokens
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+
+# Room lifecycle management
+room:
+  # Allow rooms to be created on demand when clients join
+  auto_create: true
+  # Seconds to keep room alive when empty
+  empty_timeout: 300
+  # Seconds to wait after the last participant departs before closing room
+  departure_timeout: 20
+  # Limit the size of a room for safety (0 = unlimited, rely on CPU limits)
+  max_participants: 150
+  # Allow room admins to mute/unmute participants remotely
+  enable_remote_unmute: true
+
+# Technical constraint limits
+limit:
+  max_metadata_size: 64000
+  max_attributes_size: 64000
+  max_room_name_length: 256
+  max_participant_identity_length: 256
+  max_participant_name_length: 256

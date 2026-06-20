@@ -1,0 +1,25 @@
+# ==============================================================================
+# LiveKit Egress Production Configuration Template
+# ==============================================================================
+# This template is processed by 'scripts/init.sh' at container startup.
+# Placeholders (${VARIABLE}) are replaced with actual environment values.
+
+# Credentials to connect to the LiveKit Server
+api_key: ${LIVEKIT_API_KEY}
+api_secret: ${LIVEKIT_API_SECRET}
+
+# The WebSocket URL of the LiveKit Server signaling port
+ws_url: ${LIVEKIT_WS_URL}
+
+# Redis configuration (must match the Redis used by LiveKit Server)
+redis:
+  address: ${REDIS_HOST}:${REDIS_PORT}
+  password: "${REDIS_PASSWORD}"
+  db: ${REDIS_DB}
+
+# Logging configuration
+logging:
+  level: ${LOG_LEVEL}
+
+# Port to expose service health check endpoint
+health_port: 8080
