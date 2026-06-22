@@ -26,30 +26,39 @@ fi
 
 # Perform check depending on service
 if [ "$SERVICE_TYPE" = "server" ]; then
-  # LiveKit Server has a /health endpoint
-  TARGET_URL="http://localhost:${PORT}/health"
+  # For LiveKit server, verify it is listening on the signaling port.
+  # LiveKit server does not have a public /health endpoint that returns 200 (root / returns 404).
+  # We check if the port is listening using nc, or if curl can connect (ignoring 404).
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$PORT"
+    exit $?
+  elif command -v curl >/dev/null 2>&1; then
+    # curl without -f will succeed (exit 0) if the server responds at all (even 404)
+    curl -s -o /dev/null "http://127.0.0.1:${PORT}/"
+    exit $?
+  else
+    # Fallback to checking if the process is running
+    pgrep livekit-server >/dev/null || pidof livekit-server >/dev/null
+    exit $?
+  fi
 elif [ "$SERVICE_TYPE" = "egress" ]; then
-  # LiveKit Egress exposes health on the root path of the health port
-  TARGET_URL="http://localhost:${PORT}/"
+  # LiveKit Egress exposes health on the root path of the health port (which returns 200)
+  TARGET_URL="http://127.0.0.1:${PORT}/"
+  
+  if command -v curl >/dev/null 2>&1; then
+    curl -s -f "$TARGET_URL" > /dev/null
+    exit $?
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --spider "$TARGET_URL" > /dev/null
+    exit $?
+  elif command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$PORT"
+    exit $?
+  else
+    pgrep egress >/dev/null || pidof egress >/dev/null
+    exit $?
+  fi
 else
   echo "Invalid service type: $SERVICE_TYPE. Use 'server' or 'egress'."
   exit 1
-fi
-
-# Attempt health check with curl, then wget, and fallback to netcat
-if command -v curl >/dev/null 2>&1; then
-  curl -s -f "$TARGET_URL" > /dev/null
-  exit $?
-elif command -v wget >/dev/null 2>&1; then
-  wget -q --spider "$TARGET_URL" > /dev/null
-  exit $?
-elif command -v nc >/dev/null 2>&1; then
-  # Fallback to basic port listening check if curl/wget are missing
-  nc -z localhost "$PORT"
-  exit $?
-else
-  # If all else fails, assume healthy if the process is running,
-  # but log a warning to stderr.
-  echo "Warning: no curl, wget, or netcat found for healthcheck." >&2
-  exit 0
 fi
