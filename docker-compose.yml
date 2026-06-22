@@ -53,6 +53,7 @@ services:
       start_period: 10s
     networks:
       - livekit_net
+      - dokploy-network
 
   # ----------------------------------------------------------------------------
   # 2. LiveKit Egress (Recording Service)
@@ -94,6 +95,7 @@ services:
       - livekit-server
     networks:
       - livekit_net
+      - dokploy-network
 
   # ----------------------------------------------------------------------------
   # 3. Local Redis (Optional - Used if REDIS_URL=redis://redis:6379/0)
@@ -123,3 +125,5 @@ volumes:
 networks:
   livekit_net:
     driver: bridge
+  dokploy-network:
+    external: true
