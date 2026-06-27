@@ -3,11 +3,27 @@
 # LiveKit Stack Diagnostics Tool
 # ==============================================================================
 # Run this script on your VPS host to inspect container health, network bindings,
-# generated configs (redacted), database connectivity, and logs.
+# generated configs (redacted), Redis connectivity, logs, and CORS behavior.
 
 set -e
 
-# Formatting utilities
+if [ -f ".env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
+LIVEKIT_PORT="${LIVEKIT_PORT:-7880}"
+RTC_TCP_PORT="${RTC_TCP_PORT:-7881}"
+RTC_UDP_PORT="${RTC_UDP_PORT:-7882}"
+TURN_UDP_PORT="${TURN_UDP_PORT:-3478}"
+TURN_TLS_PORT="${TURN_TLS_PORT:-5349}"
+LIVEKIT_DOMAIN="${LIVEKIT_DOMAIN:-livekit.example.com}"
+LIVEKIT_ALLOWED_ORIGINS="${LIVEKIT_ALLOWED_ORIGINS:-https://app.example.com,http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173}"
+LIVEKIT_CORS_TEST_ORIGIN="${LIVEKIT_CORS_TEST_ORIGIN:-${LIVEKIT_ALLOWED_ORIGINS%%,*}}"
+LIVEKIT_PUBLIC_URL="${LIVEKIT_PUBLIC_URL:-https://${LIVEKIT_DOMAIN}}"
+
 print_header() {
   echo ""
   echo "===================================================================="
@@ -15,118 +31,123 @@ print_header() {
   echo "===================================================================="
 }
 
-print_header "LiveKit Diagnostics - Check Status"
+container_running() {
+  docker ps --filter "name=$1" --filter status=running -q | grep -q .
+}
 
-# 1. Check Docker Daemon
+redact_yaml() {
+  sed -E 's/(password:\s*")[^"]*(")/\1[REDACTED]\2/g' | \
+    sed -E 's/(api_secret:\s*)\S+/\1[REDACTED]/g' | \
+    sed -E 's/(api_key:\s*)\S+/\1[REDACTED]/g' | \
+    awk '/keys:/{print;print "  [REDACTED_API_KEY]: [REDACTED_API_SECRET]";flag=1;next} /^[a-zA-Z]/{flag=0} flag{next} 1'
+}
+
+print_header "LiveKit Diagnostics"
+echo "LiveKit public URL: ${LIVEKIT_PUBLIC_URL}"
+echo "CORS test origin:   ${LIVEKIT_CORS_TEST_ORIGIN}"
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "[-] ERROR: docker CLI is not installed or not in the PATH."
   echo "    Please run this script on the target VPS host."
   exit 1
 fi
 
-# 2. Check Container Health and State
-print_header "1. Running Containers (livekit-server, egress, redis)"
+print_header "1. Running Containers"
 docker ps -a --filter name=livekit --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
-# 3. Check Network Ports on Host
-print_header "2. Network Port Binding Check (Listening on Host)"
+print_header "2. Container Health"
+for name in livekit-server livekit-egress livekit-redis; do
+  if docker ps -a --filter "name=${name}" -q | grep -q .; then
+    docker inspect --format '{{.Name}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} status={{.State.Status}}' "$name"
+  else
+    echo "[!] ${name} not found."
+  fi
+done
+
+print_header "3. Host Port Bindings"
 if command -v ss >/dev/null 2>&1; then
-  ss -tulpn 2>/dev/null | grep -E "7880|7881|7882|3478|5349" || echo "[!] No active ports detected on host via ss. Check container bindings."
+  ss -tulpn 2>/dev/null | grep -E "${LIVEKIT_PORT}|${RTC_TCP_PORT}|${RTC_UDP_PORT}|${TURN_UDP_PORT}|${TURN_TLS_PORT}" || echo "[!] No matching host port bindings found via ss."
 elif command -v netstat >/dev/null 2>&1; then
-  netstat -tulpn 2>/dev/null | grep -E "7880|7881|7882|3478|5349" || echo "[!] No active ports detected on host via netstat. Check container bindings."
+  netstat -tulpn 2>/dev/null | grep -E "${LIVEKIT_PORT}|${RTC_TCP_PORT}|${RTC_UDP_PORT}|${TURN_UDP_PORT}|${TURN_TLS_PORT}" || echo "[!] No matching host port bindings found via netstat."
 else
-  echo "[!] Neither ss nor netstat command found. Skipping port listing."
+  echo "[!] Neither ss nor netstat is available."
 fi
 
-# 4. Redis Connectivity Check (Internal Network)
-print_header "3. Redis Connectivity (Internal Network resolution)"
-if docker ps --filter name=livekit-server --filter status=running -q >/dev/null 2>&1; then
-  echo "[*] Checking if livekit-server container can resolve/ping Redis host..."
-  # Try to extract the Redis host from environment of the container
-  REDIS_URL_ENV=$(docker exec livekit-server env | grep REDIS_URL || true)
-  if [ -n "$REDIS_URL_ENV" ]; then
-    # Parse host
-    CLEAN_URL="${REDIS_URL_ENV#*redis://}"
-    CLEAN_URL="${CLEAN_URL#*@}"
-    REDIS_HOST="${CLEAN_URL%%:*}"
-    REDIS_HOST="${REDIS_HOST%%/*}"
-    echo "    Detected Redis Host from env: $REDIS_HOST"
-    
-    # Try pinging Redis from livekit-server container
-    if docker exec livekit-server ping -c 1 "$REDIS_HOST" >/dev/null 2>&1; then
-      echo "[+] SUCCESS: livekit-server container can ping Redis ($REDIS_HOST)."
+print_header "4. Required Port Checks"
+echo "Signaling/API TCP ${LIVEKIT_PORT}: should be routed by Dokploy/Traefik to livekit-server."
+echo "RTC TCP ${RTC_TCP_PORT}: should be open on the VPS firewall."
+echo "RTC UDP mux ${RTC_UDP_PORT}: should be open on the VPS firewall."
+echo "TURN TCP/UDP ${TURN_UDP_PORT}: should be open on the VPS firewall."
+if [ -n "$TURN_TLS_PORT" ]; then
+  echo "TURN TLS TCP/UDP ${TURN_TLS_PORT}: open only if TURN TLS certs are configured."
+fi
+
+print_header "5. Redis Connectivity"
+for name in livekit-server livekit-egress; do
+  if container_running "$name"; then
+    REDIS_URL_ENV=$(docker exec "$name" env | grep '^REDIS_URL=' || true)
+    if [ -n "$REDIS_URL_ENV" ]; then
+      CLEAN_URL="${REDIS_URL_ENV#REDIS_URL=}"
+      CLEAN_URL="${CLEAN_URL#redis://}"
+      CLEAN_URL="${CLEAN_URL#*@}"
+      REDIS_HOST="${CLEAN_URL%%:*}"
+      REDIS_HOST="${REDIS_HOST%%/*}"
+      echo "[*] ${name} Redis host: ${REDIS_HOST}"
+      if docker exec "$name" ping -c 1 "$REDIS_HOST" >/dev/null 2>&1; then
+        echo "[+] ${name} can resolve/ping Redis."
+      else
+        echo "[-] ${name} cannot resolve/ping Redis. Check Docker networks and REDIS_URL."
+      fi
     else
-      echo "[-] FAILURE: livekit-server container cannot resolve/ping Redis ($REDIS_HOST)."
-      echo "    Check if they are in the same docker networks."
+      echo "[!] REDIS_URL is not defined in ${name}."
     fi
   else
-    echo "[!] REDIS_URL environment variable is not defined on livekit-server container."
+    echo "[!] ${name} is not running."
   fi
-else
-  echo "[!] livekit-server container is not running. Skipping database network check."
-fi
+done
 
-if docker ps --filter name=livekit-egress --filter status=running -q >/dev/null 2>&1; then
-  echo "[*] Checking if livekit-egress container can resolve/ping Redis host..."
-  REDIS_URL_ENV=$(docker exec livekit-egress env | grep REDIS_URL || true)
-  if [ -n "$REDIS_URL_ENV" ]; then
-    CLEAN_URL="${REDIS_URL_ENV#*redis://}"
-    CLEAN_URL="${CLEAN_URL#*@}"
-    REDIS_HOST="${CLEAN_URL%%:*}"
-    REDIS_HOST="${REDIS_HOST%%/*}"
-    
-    if docker exec livekit-egress ping -c 1 "$REDIS_HOST" >/dev/null 2>&1; then
-      echo "[+] SUCCESS: livekit-egress container can ping Redis ($REDIS_HOST)."
-    else
-      echo "[-] FAILURE: livekit-egress container cannot resolve/ping Redis ($REDIS_HOST)."
-      echo "    Please verify that 'dokploy-network' is declared as an external network and"
-      echo "    attached to both livekit-server and livekit-egress in your docker-compose.yml."
-    fi
+if container_running livekit-redis; then
+  if docker exec livekit-redis redis-cli ping >/dev/null 2>&1; then
+    echo "[+] livekit-redis responds to redis-cli ping."
   else
-    echo "[!] REDIS_URL environment variable is not defined on livekit-egress container."
+    echo "[-] livekit-redis did not respond to redis-cli ping."
   fi
-else
-  echo "[!] livekit-egress container is not running."
 fi
 
-# 5. Redacted Configurations
-print_header "4. Active LiveKit Config (/tmp/livekit.yaml - REDACTED)"
-if docker ps --filter name=livekit-server --filter status=running -q >/dev/null 2>&1; then
-  docker exec livekit-server cat /tmp/livekit.yaml 2>/dev/null | \
-    sed -E 's/(password:\s*")[^"]*(")/\1[REDACTED]\2/g' | \
-    sed -E 's/(api_secret:\s*)\S+/\1[REDACTED]/g' | \
-    awk '/keys:/{print;print "  [REDACTED_API_KEY]: [REDACTED_API_SECRET]";flag=1;next} /^[a-zA-Z]/{flag=0} flag{next} 1' || \
-    echo "[-] Cannot read /tmp/livekit.yaml from livekit-server."
+print_header "6. Active LiveKit Config (/tmp/livekit.yaml - redacted)"
+if container_running livekit-server; then
+  docker exec livekit-server cat /tmp/livekit.yaml 2>/dev/null | redact_yaml || echo "[-] Cannot read /tmp/livekit.yaml."
 else
-  echo "[!] livekit-server container is not running."
+  echo "[!] livekit-server is not running."
 fi
 
-print_header "5. Active Egress Config (/tmp/egress.yaml - REDACTED)"
-if docker ps --filter name=livekit-egress --filter status=running -q >/dev/null 2>&1; then
-  docker exec livekit-egress cat /tmp/egress.yaml 2>/dev/null | \
-    sed -E 's/(password:\s*")[^"]*(")/\1[REDACTED]\2/g' | \
-    sed -E 's/(api_secret:\s*)\S+/\1[REDACTED]/g' | \
-    sed -E 's/(api_key:\s*)\S+/\1[REDACTED]/g' || \
-    echo "[-] Cannot read /tmp/egress.yaml from livekit-egress."
+print_header "7. Active Egress Config (/tmp/egress.yaml - redacted)"
+if container_running livekit-egress; then
+  docker exec livekit-egress cat /tmp/egress.yaml 2>/dev/null | redact_yaml || echo "[-] Cannot read /tmp/egress.yaml."
 else
-  echo "[!] livekit-egress container is not running."
+  echo "[!] livekit-egress is not running."
 fi
 
-# 6. Service Logs
-print_header "6. Recent LiveKit Server Logs"
-docker logs --tail=30 livekit-server || echo "[-] Cannot read livekit-server logs."
+print_header "8. Recent LiveKit Server Logs"
+docker logs --tail=40 livekit-server || echo "[-] Cannot read livekit-server logs."
 
-print_header "7. Recent LiveKit Egress Logs"
-docker logs --tail=30 livekit-egress || echo "[-] Cannot read livekit-egress logs."
+print_header "9. Recent LiveKit Egress Logs"
+docker logs --tail=40 livekit-egress || echo "[-] Cannot read livekit-egress logs."
 
-# 7. Testing Reminders
-print_header "7. Troubleshooting & Testing Guidelines"
-echo "1. HTTP Root 404 is NORMAL: Opening https://livekit.unfolk.com in a browser"
-echo "   will return '404 page not found'. Do not treat this as a failure."
-echo "2. Real connection URL for clients/SDKs is WebSocket-based:"
-echo "   wss://livekit.unfolk.com"
-echo "3. Use the official LiveKit connection tester to verify client reachability:"
-echo "   https://connection-test.livekit.io/"
-echo "4. Generate a test participant JWT token using your backend SDK with the same"
-echo "   LIVEKIT_API_KEY and LIVEKIT_API_SECRET configured in livekit-server."
-echo "===================================================================="
+print_header "10. CORS Test"
+if command -v curl >/dev/null 2>&1; then
+  echo "Running:"
+  echo "curl -i -H \"Origin: ${LIVEKIT_CORS_TEST_ORIGIN}\" \"${LIVEKIT_PUBLIC_URL}/rtc/v1/validate\""
+  curl -i -H "Origin: ${LIVEKIT_CORS_TEST_ORIGIN}" "${LIVEKIT_PUBLIC_URL}/rtc/v1/validate" || true
+  echo ""
+  echo "Expected: Access-Control-Allow-Origin should match ${LIVEKIT_CORS_TEST_ORIGIN}, even when the token is missing or invalid."
+else
+  echo "[!] curl is not installed. Skipping CORS test."
+fi
+
+print_header "11. Testing Guidelines"
+echo "1. HTTP root 404 is normal for LiveKit."
+echo "2. Clients should connect to wss://${LIVEKIT_DOMAIN}."
+echo "3. Dokploy domain routing should target service livekit-server on internal port ${LIVEKIT_PORT} with SSL enabled."
+echo "4. Do not route the LiveKit domain to egress, Redis, frontend, or backend services."
+echo "5. Use https://connection-test.livekit.io/ with a valid participant token to verify WebRTC connectivity."

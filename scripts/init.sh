@@ -65,17 +65,26 @@ fi
 # 2. Set default values for other optional variables
 LIVEKIT_PORT="${LIVEKIT_PORT:-7880}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
-LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
-LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
 RTC_USE_EXTERNAL_IP="${RTC_USE_EXTERNAL_IP:-true}"
 RTC_TCP_PORT="${RTC_TCP_PORT:-7881}"
 RTC_UDP_PORT="${RTC_UDP_PORT:-7882}"
 LIVEKIT_WS_URL="${LIVEKIT_WS_URL:-ws://livekit-server:7880}"
+LIVEKIT_ALLOWED_ORIGINS="${LIVEKIT_ALLOWED_ORIGINS:-}"
 
 TURN_ENABLED="${TURN_ENABLED:-true}"
-TURN_DOMAIN="${TURN_DOMAIN:-turn.yourdomain.com}"
+TURN_DOMAIN="${TURN_DOMAIN:-turn.example.com}"
 TURN_UDP_PORT="${TURN_UDP_PORT:-3478}"
 TURN_TLS_PORT="${TURN_TLS_PORT:-5349}"
+
+if [ -z "$LIVEKIT_API_KEY" ]; then
+  echo "ERROR: LIVEKIT_API_KEY environment variable is not set."
+  exit 1
+fi
+
+if [ -z "$LIVEKIT_API_SECRET" ]; then
+  echo "ERROR: LIVEKIT_API_SECRET environment variable is not set."
+  exit 1
+fi
 
 # 3. Generate livekit.yaml
 if [ -f "/config/livekit.template.yaml" ]; then
@@ -97,6 +106,7 @@ if [ -f "/config/livekit.template.yaml" ]; then
       -e "s|\${TURN_TLS_PORT}|$TURN_TLS_PORT|g" \
       -e "s|\${LIVEKIT_API_KEY}|$LIVEKIT_API_KEY|g" \
       -e "s|\${LIVEKIT_API_SECRET}|$LIVEKIT_API_SECRET|g" \
+      -e "s|\${LIVEKIT_ALLOWED_ORIGINS}|$LIVEKIT_ALLOWED_ORIGINS|g" \
       /config/livekit.template.yaml > /tmp/livekit.yaml.tmp
 
   # Step 2: Handle TURN TLS Certificates

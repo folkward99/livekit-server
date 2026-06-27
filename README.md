@@ -54,7 +54,7 @@ livekit-server/
 Unlike standard web applications, WebRTC media traffic (audio/video) is carried over **UDP** and bypasses Dokploy's HTTP reverse proxy (Traefik).
 
 To support this, the stack is configured by default to use **UDP Mux (Single Port)**:
-- **Direct Signaling/API**: Exposes port `7880` (TCP). Dokploy routes your external domain (`livekit.unfolk.com`) directly to this internal port.
+- **Direct Signaling/API**: Exposes port `7880` (TCP). Dokploy/Traefik routes `LIVEKIT_DOMAIN` directly to this internal port.
 - **WebRTC UDP Mux**: Exposes port `7882` (UDP). You **must** open `7882/UDP` in your VPS firewall.
 - **WebRTC TCP Fallback**: Exposes port `7881` (TCP). Used when UDP is blocked.
 - **TURN Server**: Exposes port `3478` (UDP & TCP). Used for NAT traversal when direct WebRTC is blocked.
@@ -62,7 +62,6 @@ To support this, the stack is configured by default to use **UDP Mux (Single Por
 ### VPS Firewall Setup (UFW Example)
 Run the following commands on your Ubuntu Server to open the required ports:
 ```bash
-sudo ufw allow 7880/tcp
 sudo ufw allow 7881/tcp
 sudo ufw allow 7882/udp
 sudo ufw allow 3478/tcp
@@ -71,8 +70,27 @@ sudo ufw reload
 sudo ufw status
 ```
 
-> [!NOTE]
-> **Port 7880 Firewall Rule**: Since Dokploy/Traefik handles domain routing and SSL termination for `livekit.unfolk.com` over the standard HTTPS/WSS port (`443` externally) and forwards it internally to `7880`, you do not strictly need to open port `7880` on the VPS public firewall in production. However, keeping it allowed can be helpful for direct TCP troubleshooting and container testing.
+If you enable a TURN relay UDP range, also open that range:
+```bash
+sudo ufw allow 30000:40000/udp
+sudo ufw reload
+```
+
+Port `7880` is normally internal to Dokploy/Traefik. You do not need to expose it on the public firewall unless you intentionally want direct host-level troubleshooting.
+
+### VPS Sysctl Setup
+Run these host-level settings on the VPS:
+```bash
+sudo tee /etc/sysctl.d/99-livekit.conf > /dev/null <<'EOF'
+net.core.rmem_max=5000000
+net.core.wmem_max=5000000
+vm.overcommit_memory=1
+EOF
+
+sudo sysctl --system
+```
+
+`vm.overcommit_memory=1` fixes the Redis warning. `net.core.rmem_max` and `net.core.wmem_max` fix LiveKit UDP buffer warnings.
 
 ---
 
@@ -83,25 +101,29 @@ Copy `.env.example` to `.env` (or configure these inside the Dokploy Environment
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
 | `LIVEKIT_PORT` | `7880` | Internal port for signaling (HTTP/WS). |
+| `LIVEKIT_DOMAIN` | `livekit.example.com` | Public domain routed by Dokploy/Traefik to `livekit-server`. |
+| `LIVEKIT_ALLOWED_ORIGINS` | `https://app.example.com,...` | Comma-separated frontend origins allowed to call browser LiveKit endpoints. |
 | `LOG_LEVEL` | `info` | Server logging level (`debug`, `info`, `warn`, `error`). |
-| `LIVEKIT_API_KEY` | `devkey` | Unique identifier key used by UCMS to sign JWTs. |
-| `LIVEKIT_API_SECRET` | `secret` | Shared secret used to sign/verify JWT tokens. |
+| `LIVEKIT_API_KEY` | *(set in `.env`)* | Unique identifier key used by your backend to sign JWTs. |
+| `LIVEKIT_API_SECRET` | *(set in `.env`)* | Shared secret used to sign/verify JWT tokens. |
 | `REDIS_URL` | `redis://redis:6379/0` | Redis connection URL. Set to an external Redis if using Option A. |
 | `RTC_USE_EXTERNAL_IP` | `true` | Enables auto-discovery of the VPS public IP. |
 | `RTC_TCP_PORT` | `7881` | Port for WebRTC fallback over TCP. |
 | `RTC_UDP_PORT` | `7882` | Single UDP port for WebRTC UDP Mux. |
 | `TURN_ENABLED` | `true` | Enable built-in TURN server for NAT bypass. |
-| `TURN_DOMAIN` | `turn.yourdomain.com` | Public subdomain pointing to the TURN server. |
+| `TURN_DOMAIN` | `turn.example.com` | Public subdomain pointing to the TURN server. |
 | `TURN_UDP_PORT` | `3478` | Plain UDP TURN port. |
 | `TURN_TLS_PORT` | `5349` | TURN over TLS port (requires certs). |
 | `TURN_CERT_FILE` | *(empty)* | Optional path to TURN TLS certificate inside container. |
 | `TURN_KEY_FILE` | *(empty)* | Optional path to TURN TLS key inside container. |
 | `LIVEKIT_WS_URL` | `ws://livekit-server:7880` | Internal WS URL used by the Egress service. |
 | `EGRESS_MINIO_ENDPOINT` | `http://minio:9000` | S3 API endpoint of your MinIO server. |
-| `EGRESS_MINIO_ACCESS_KEY`| `minio_access_key` | MinIO admin access key. |
-| `EGRESS_MINIO_SECRET_KEY`| `minio_secret_key` | MinIO admin secret key. |
+| `EGRESS_MINIO_ACCESS_KEY`| *(set in `.env`)* | MinIO admin access key. |
+| `EGRESS_MINIO_SECRET_KEY`| *(set in `.env`)* | MinIO admin secret key. |
 | `EGRESS_MINIO_BUCKET` | `livekit-recordings`| MinIO bucket for storing meeting recordings. |
 | `EGRESS_MINIO_FORCE_PATH_STYLE` | `true` | Mandatory `true` value for MinIO/S3-compatible APIs. |
+
+Do not commit a real `.env` file. Keep API secrets, storage credentials, production domains, and project-specific frontend origins in `.env` or Dokploy environment variables.
 
 ---
 
@@ -122,33 +144,45 @@ Dokploy handles deployments automatically from your Git repository. Follow these
    - Click **Deploy** in the Dokploy dashboard.
    - The containers will pull, execute the automated `init.sh` script to parse configuration parameters, and start up cleanly.
 5. **Set up Domain & SSL**:
-   - In the Dokploy Compose dashboard under the `livekit-server` service configuration, add a domain (e.g., `livekit.uncaptured.co`).
-   - Set the port to route to as `7880`. Dokploy will automatically generate the SSL certificate via Let's Encrypt and handle HTTPS/WSS termination.
+   - In the Dokploy Compose dashboard under the `livekit-server` service configuration, add the domain from `LIVEKIT_DOMAIN`.
+   - Set the internal port to route to as `7880` or your configured `LIVEKIT_PORT`.
+   - Enable SSL. Dokploy will generate the certificate via Let's Encrypt and handle HTTPS/WSS termination.
+   - Do not route this domain to egress, Redis, your frontend, or your backend.
 
 ---
 
 ## Egress & MinIO Integration (Phase 2)
 
 The LiveKit Egress container includes pre-mapped environment variables for MinIO connectivity.
-When initiating a recording or streaming task from your backend (e.g. UCMS Go/Fiber backend) using the LiveKit SDK, you must pass the S3/MinIO upload settings.
+When initiating a recording or streaming task from your backend using the LiveKit SDK, pass the S3/MinIO upload settings from environment variables.
 
-### Go SDK Recording Example (UCMS Integration)
+### Go SDK Recording Example
 ```go
 import (
 	"context"
+	"os"
+
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go"
 )
 
 func StartRoomRecording(roomName string) error {
-	egressClient := lksdk.NewEgressClient("https://livekit-server:7880", "your_api_key", "your_api_secret")
+	livekitURL := os.Getenv("LIVEKIT_URL")
+	apiKey := os.Getenv("LIVEKIT_API_KEY")
+	apiSecret := os.Getenv("LIVEKIT_API_SECRET")
+	minioAccessKey := os.Getenv("EGRESS_MINIO_ACCESS_KEY")
+	minioSecretKey := os.Getenv("EGRESS_MINIO_SECRET_KEY")
+	minioBucket := os.Getenv("EGRESS_MINIO_BUCKET")
+	minioEndpoint := os.Getenv("EGRESS_MINIO_ENDPOINT")
+
+	egressClient := lksdk.NewEgressClient(livekitURL, apiKey, apiSecret)
 
 	// Define MinIO output settings
 	s3Output := &livekit.S3Upload{
-		AccessKey:      "your_minio_access_key",
-		Secret:         "your_minio_secret_key",
-		Bucket:         "livekit-recordings",
-		Endpoint:       "http://minio-server-ip-or-dns:9000",
+		AccessKey:      minioAccessKey,
+		Secret:         minioSecretKey,
+		Bucket:         minioBucket,
+		Endpoint:       minioEndpoint,
 		ForcePathStyle: true,
 	}
 
@@ -236,39 +270,40 @@ docker compose logs --tail=100 -f livekit-egress
 
 ### 3. Connection Testing & WebRTC Verification
 > [!IMPORTANT]
-> **Root URL HTTP 404 is Normal**: Opening `https://livekit.unfolk.com` in a browser will return `404 page not found`. This is expected because the LiveKit core server does not expose a standard website/homepage. It only accepts WebSocket upgrades and API calls. Do not treat a root 404 as a deployment failure.
+> **Root URL HTTP 404 is Normal**: Opening `https://<LIVEKIT_DOMAIN>` in a browser may return `404 page not found`. This is expected because the LiveKit core server does not expose a standard website/homepage. It only accepts WebSocket upgrades and API calls. Do not treat a root 404 as a deployment failure.
 
 To test the server connection correctly:
 1. **Client Connection URL**: Your clients/frontend apps must connect using the WebSocket secure protocol:
    ```text
-   wss://livekit.unfolk.com
+   wss://<LIVEKIT_DOMAIN>
    ```
 2. **Generate a Test Token**: Generate a participant token using a LiveKit SDK on your backend. Make sure the token is signed with the same `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` used to deploy the server.
 3. **Use the Connection Tester**:
    - Go to the official [LiveKit Connection Test tool](https://connection-test.livekit.io/).
-   - Enter your public LiveKit WebSocket URL: `wss://livekit.unfolk.com`.
+   - Enter your public LiveKit WebSocket URL: `wss://<LIVEKIT_DOMAIN>`.
    - Paste your generated test token and click **Start Test** to verify connectivity, TCP fallback, and UDP media relay.
 
 ---
 
-## Integration Details for Aritte Project
+## Integration Details for Client Projects
 
-To connect the Aritte application stack to this LiveKit deployment, configure the following parameters:
+To connect an application stack to this LiveKit deployment, configure the following parameters in that application's environment.
 
 ### Backend Integration
-Ensure the UCMS or Aritte backend uses these environment variables:
+Ensure your backend uses these environment variables:
 - `LIVEKIT_API_KEY`: Must match the api key deployed on the server.
 - `LIVEKIT_API_SECRET`: Must match the secret deployed on the server.
-- `LIVEKIT_URL`: Set to `https://livekit.unfolk.com` (for HTTP API calls) or `wss://livekit.unfolk.com` (for WebSocket connections depending on client requirements).
+- `LIVEKIT_URL`: Set to `https://<LIVEKIT_DOMAIN>` for HTTP API calls.
 
 ### Frontend Integration
 Ensure the Web/Client application uses the WebSocket protocol for real-time room communication:
-- `NEXT_PUBLIC_LIVEKIT_URL` / `REACT_APP_LIVEKIT_URL`: Set to `wss://livekit.unfolk.com`
+- `NEXT_PUBLIC_LIVEKIT_URL` / `REACT_APP_LIVEKIT_URL`: Set to `wss://<LIVEKIT_DOMAIN>`.
+- The frontend origin must be included in `LIVEKIT_ALLOWED_ORIGINS`.
 
 ### Egress Service Integration
 - **Internal WS URL**: The egress container connects internally inside the Docker network. Ensure it is configured with:
   `LIVEKIT_WS_URL=ws://livekit-server:7880`
-- **Shared Redis Database**: Egress connects to the exact same Redis database as LiveKit Server. Its network connectivity to `aritte-project-redislivekit-pqblaq` is established via the shared external `dokploy-network`.
+- **Shared Redis Database**: Egress connects to the exact same Redis database as LiveKit Server through `REDIS_URL`.
 
 ---
 

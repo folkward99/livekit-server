@@ -28,6 +28,7 @@ services:
       - TURN_TLS_PORT=${TURN_TLS_PORT}
       - TURN_CERT_FILE=${TURN_CERT_FILE}
       - TURN_KEY_FILE=${TURN_KEY_FILE}
+      - LIVEKIT_ALLOWED_ORIGINS=${LIVEKIT_ALLOWED_ORIGINS}
     volumes:
       # Mount directory containing templates and scripts
       - ./config:/config
@@ -47,10 +48,22 @@ services:
       - "${TURN_TLS_PORT}:${TURN_TLS_PORT}/tcp"
     healthcheck:
       test: ["CMD", "sh", "/scripts/healthcheck.sh", "server", "${LIVEKIT_PORT}"]
-      interval: 15s
+      interval: 30s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 20s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.livekit-server.rule=Host(`${LIVEKIT_DOMAIN}`)
+      - traefik.http.routers.livekit-server.entrypoints=websecure
+      - traefik.http.routers.livekit-server.tls=true
+      - traefik.http.routers.livekit-server.service=livekit-server
+      - traefik.http.services.livekit-server.loadbalancer.server.port=${LIVEKIT_PORT}
+      - traefik.http.routers.livekit-server.middlewares=livekit-cors
+      - traefik.http.middlewares.livekit-cors.headers.accessControlAllowOriginList=${LIVEKIT_ALLOWED_ORIGINS}
+      - traefik.http.middlewares.livekit-cors.headers.accessControlAllowMethods=GET,POST,OPTIONS
+      - traefik.http.middlewares.livekit-cors.headers.accessControlAllowHeaders=Authorization,Content-Type,Accept,Origin,X-Requested-With
+      - traefik.http.middlewares.livekit-cors.headers.addVaryHeader=true
     networks:
       - livekit_net
       - dokploy-network
@@ -87,10 +100,10 @@ services:
       - ./storage:/storage
     healthcheck:
       test: ["CMD", "sh", "/scripts/healthcheck.sh", "egress", "8080"]
-      interval: 20s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       - livekit-server
     networks:
