@@ -38,8 +38,8 @@ turn:
   domain: ${TURN_DOMAIN}
   udp_port: ${TURN_UDP_PORT}
   tls_port: ${TURN_TLS_PORT}
-  # SSL Certificates for TURN TLS (will be replaced by init.sh if provided)
-  # {TURN_TLS_CONFIG}
+  cert_file: ${TURN_CERT_FILE}
+  key_file: ${TURN_KEY_FILE}
 
 # API Keys and Secrets used to sign/verify JWT tokens
 keys:

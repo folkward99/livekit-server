@@ -5,7 +5,7 @@ services:
   # 1. LiveKit Core Server
   # ----------------------------------------------------------------------------
   livekit-server:
-    image: livekit/livekit-server:v1.7.2
+    image: livekit/livekit-server:v1.13.2
     container_name: livekit-server
     restart: unless-stopped
     # Use custom entrypoint to execute init.sh before running the server
@@ -47,11 +47,11 @@ services:
       - "${TURN_TLS_PORT}:${TURN_TLS_PORT}/udp"
       - "${TURN_TLS_PORT}:${TURN_TLS_PORT}/tcp"
     healthcheck:
-      test: ["CMD", "sh", "/scripts/healthcheck.sh", "server", "${LIVEKIT_PORT}"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${LIVEKIT_PORT} || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 30s
     labels:
       - traefik.enable=true
       - traefik.http.routers.livekit-server.rule=Host(`${LIVEKIT_DOMAIN}`)
@@ -72,7 +72,7 @@ services:
   # 2. LiveKit Egress (Recording Service)
   # ----------------------------------------------------------------------------
   livekit-egress:
-    image: livekit/egress:v1.8.6
+    image: livekit/egress:v1.13.0
     container_name: livekit-egress
     restart: unless-stopped
     # Egress needs SYS_ADMIN capability to run Chromium sandboxing
@@ -99,11 +99,11 @@ services:
       - ./scripts:/scripts:ro
       - ./storage:/storage
     healthcheck:
-      test: ["CMD", "sh", "/scripts/healthcheck.sh", "egress", "8080"]
+      test: ["CMD-SHELL", "pgrep -f egress || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 30s
     depends_on:
       - livekit-server
     networks:

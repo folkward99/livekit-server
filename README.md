@@ -21,6 +21,8 @@ This repository contains the complete, production-ready configuration for self-h
 ## Project Overview
 
 LiveKit is an open-source Selective Forwarding Unit (SFU) for building real-time audio, video, and screen-sharing applications. 
+This deployment stack pins LiveKit Server `v1.13.2` and LiveKit Egress `v1.13.0` for compatibility with Aritte frontend packages `livekit-client 2.19.2`, `@livekit/components-react 2.9.21`, and `@livekit/components-styles 1.2.0`.
+
 This deployment stack contains:
 - **LiveKit Server**: Manages rooms, handles signaling, and forwards WebRTC media.
 - **LiveKit Egress**: Captures room media (recording/streaming) using a headless Chrome process inside a container.
@@ -237,7 +239,7 @@ To restore the stack:
 To update the LiveKit Server or Egress components to newer versions:
 1. Open `docker-compose.yml`.
 2. Locate the `image:` tags for `livekit-server` and `livekit-egress`.
-3. Update the versions (e.g. `livekit/livekit-server:v1.8.0`).
+3. Update the versions to explicit pinned tags after checking LiveKit release notes. Do not use `latest` for production. Current pins are `livekit/livekit-server:v1.13.2` and `livekit/egress:v1.13.0`.
 4. Commit and push the changes to GitHub. Dokploy will pull the changes and redeploy.
 
 ---
@@ -255,6 +257,8 @@ This script automates checking:
 - Redacted `/tmp/livekit.yaml` and `/tmp/egress.yaml` files.
 - Redis container-to-container network resolution over the shared `dokploy-network`.
 - Core server and egress logs.
+- LiveKit image versions and reported server version.
+- Browser RTC validation path `/rtc/v1/validate` and CORS headers.
 
 ### 2. Manual Diagnostics
 You can manually check configurations and logs using standard Docker Compose commands:
